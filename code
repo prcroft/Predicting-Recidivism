@@ -1,0 +1,133 @@
+# Dataset of recidivism from NC located at located at 
+# http://www.stata.com/data/jwooldridge/eacsap/recid.dta
+
+# In order to read Stata dataset into R, load "foreign" library and use read.dta command
+
+library(foreign)
+arrest<-read.dta("http://www.stata.com/data/jwooldridge/eacsap/recid.dta")
+
+# Review the columns.
+
+head(arrest)
+
+## black alcohol drugs super married felon workprg property person priors educ rules age tserved follow
+## 1     0       1     0     1       1     0       1        0      0      0    7     2 441      30     72
+## 2     1       0     0     1       0     1       1        1      0      0   12     0 307      19     75
+## 3     0       0     0     0       0     0       1        1      0      0    9     5 262      27     81
+## 4     0       0     1     1       0     1       1        1      0      2    9     3 253      38     76
+## 5     0       0     1     1       0     0       0        0      0      0    9     0 244       4     81
+## 6     1       0     0     1       0     0       1        0      0      1   12     0 277      13     79
+## durat cens   ldurat
+## 1    72    1 4.276666
+## 2    75    1 4.317488
+## 3     9    0 2.197225
+## 4    25    0 3.218876
+## 5    81    1 4.394449
+## 6    79    1 4.369448
+
+# Get the key to the variable names.
+
+var.labels<-attr(arrest, "var.labels")
+data.key<-data.frame(var.name=names(arrest), var.labels)
+data.key
+
+## var.name                     var.labels
+## 1     black                    =1 if black
+## 2   alcohol         =1 if alcohol problems
+## 3     drugs             =1 if drug history
+## 4     super       =1 if release supervised
+## 5   married     =1 if married when incarc.
+## 6     felon          =1 if felony sentence
+## 7   workprg  =1 if in N.C. pris. work prg.
+## 8  property           =1 if property crime
+## 9    person     =1 if crime against person
+## 10   priors            # prior convictions
+## 11     educ             years of schooling
+## 12    rules   # rules violations in prison
+## 13      age                      in months
+## 14  tserved time served, rounded to months
+## 15   follow   length follow period, months
+## 16    durat max(time until return, follow)
+## 17     cens  =1 if duration right censored
+## 18   ldurat                     log(durat)         
+
+# Determine how many released prisoners were reincarcerated during the study period, with cens=0
+# indicating reincarceration.
+
+table(arrest$cens)
+
+## 0   1 
+## 552 893
+
+# Add a column with a variable that is more intuitive than "cens" and uses "yes" or "no" rather
+# than "1" or "0" so that results are more intelligible.
+
+arrest$reincarcerated<-ifelse(arrest$cens == 1,"no","yes")
+
+# Check to make sure it worked; if the new column match the old column, the result should be "1".
+
+ifelse(as.vector(table(arrest$cens == 1)[2]) == as.vector(table(arrest$reincarcerated == "no")[2]), 1,0)
+
+## [1] 1
+
+# Import the rpart library for CART analysis.
+
+library(rpart)
+library(rpart.plot)
+
+# Grow a CART prediction tree with "reincarcerated" as the dependent variable and all of the other variables
+# except for "follow", "durat", and "ldurat" as independent variables. Then examine the variables 
+# of importance.
+
+fit.cart=rpart(reincarcerated ~ black + alcohol + drugs + super + married + felon + workprg + property + person +priors +educ +rules + age + tserved, data=arrest)
+vi.cart = fit.cart$variable.importance / sum(fit.cart$variable.importance)
+vi.cart
+
+## age     tserved      priors       rules       felon    property       drugs     married 
+## 0.332293760 0.264303195 0.139246365 0.098518121 0.048451077 0.039565758 0.033389273 0.016051896 
+## workprg        educ     alcohol      person 
+## 0.013663750 0.006682710 0.003959958 0.003874139 
+
+# Plot this CART prediction tree.
+
+rpart.plot(fit.cart, type=4, varlen=0, extra=2, clip.right.labs = FALSE,prefix="Reincarcerated=", main="Released Prisoners Outcome CART")
+
+# See the "Released Prisoners Outcome CART" figure.
+
+
+# Examine the cross-validated error for this CART analysis.
+
+fit.cart$cptable
+
+##           CP nsplit rel error    xerror       xstd
+## 1 0.06159420      0 1.0000000 1.0000000 0.03345972
+## 2 0.03260870      1 0.9384058 0.9818841 0.03334038
+## 3 0.01494565      2 0.9057971 0.9746377 0.03329061
+## 4 0.01086957      6 0.8460145 0.9492754 0.03310720
+## 5 0.01000000      9 0.8134058 0.9547101 0.03314772
+
+plotcp(fit.cart)
+
+# See "size of tree" cross-validated error plot.
+
+
+# Prune CART prediction tree to reduce concerns regarding overfitting.
+
+prune.cart = prune(fit.cart, cp= fit.cart$cptable[3, "CP"])
+rpart.plot(prune.cart, type=4, varlen=0, extra=2, clip.right.labs = FALSE,prefix="Reincarcerated=", main="Pruned Released Prisoners Outcome CART")
+
+# See "Pruned Released Prisoners Outcome CART" figure.
+
+
+# Check accuracy of pruned CART prediction tree versus the unpruned CART prediction tree.
+
+library(plyr)
+pruned.outcomes <- predict(prune.cart, type="class")
+full.outcomes <- predict(fit.cart, type="class")
+original.outcomes <- arrest$reincarcerated
+error.pruned <- count(pruned.outcomes != original.outcomes)$freq[2] / (length(original.outcomes))
+error.full <- count(full.outcomes != original.outcomes)$freq[2] / (length(original.outcomes))
+error.pruned
+## [1] 0.3460208
+error.full
+## [1] 0.3107266
